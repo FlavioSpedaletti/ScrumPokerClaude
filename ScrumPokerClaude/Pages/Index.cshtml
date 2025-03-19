@@ -1,0 +1,152 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Home page";
+}
+
+@section scripts {
+
+
+}
+
+<div class="container">
+    <!-- Tela de Login -->
+    <div id="loginScreen" class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="text-center">Scrum Poker</h3>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label for="username">Seu nome:</label>
+                        <input type="text" id="username" class="form-control" placeholder="Digite seu nome">
+                    </div>
+                    <button id="enterButton" class="btn btn-primary w-100 mt-3">Entrar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tela Principal -->
+    <div id="mainScreen" class="hidden">
+        <div class="row mb-4">
+            <div class="col">
+                <h2>Scrum Poker</h2>
+                <h5>Bem-vindo, <span id="userNameDisplay"></span></h5>
+            </div>
+            <div class="col-auto">
+                <button id="leaveButton" class="btn btn-outline-danger">Sair</button>
+            </div>
+        </div>
+
+        <!-- Área do moderador -->
+        <div id="moderatorArea" class="row mb-4">
+            <div class="col">
+                <div class="card">
+                    <div class="card-header">
+                        <h4>Área do Moderador</h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-group mb-3">
+                            <label for="taskDescription">Descrição da Tarefa:</label>
+                            <input type="text" id="taskDescription" class="form-control" placeholder="Descreva a tarefa para a equipe avaliar">
+                        </div>
+                        <div class="row">
+                            <div class="col">
+                                <button id="startVotingButton" class="btn btn-primary w-100">Iniciar Votação</button>
+                            </div>
+                            <div class="col">
+                                <button id="revealVotesButton" class="btn btn-success w-100" disabled>Revelar Votos</button>
+                            </div>
+                            <div class="col">
+                                <button id="resetVotingButton" class="btn btn-warning w-100" disabled>Nova Votação</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Área da tarefa atual -->
+        <div id="currentTaskArea" class="row mb-4 hidden">
+            <div class="col">
+                <div class="card">
+                    <div class="card-header">
+                        <h4>Tarefa Atual</h4>
+                    </div>
+                    <div class="card-body">
+                        <p id="currentTaskDescription" class="lead"></p>
+                        <div id="votingStatusArea" class="alert alert-info">
+                            Votação em andamento...
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Área de votação -->
+        <div id="votingArea" class="row mb-4 hidden">
+            <div class="col">
+                <div class="card">
+                    <div class="card-header">
+                        <h4>Escolha sua estimativa</h4>
+                    </div>
+                    <div class="card-body text-center">
+                        <div id="cardsContainer">
+                            <div class="poker-card" data-value="0">0</div>
+                            <div class="poker-card" data-value="0.5">½</div>
+                            <div class="poker-card" data-value="1">1</div>
+                            <div class="poker-card" data-value="2">2</div>
+                            <div class="poker-card" data-value="3">3</div>
+                            <div class="poker-card" data-value="5">5</div>
+                            <div class="poker-card" data-value="8">8</div>
+                            <div class="poker-card" data-value="13">13</div>
+                            <div class="poker-card" data-value="20">20</div>
+                            <div class="poker-card" data-value="40">40</div>
+                            <div class="poker-card" data-value="100">100</div>
+                        </div>
+                        <p class="mt-3">Sua escolha: <span id="selectedValue">Nenhuma</span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Área de resultados -->
+        <div class="row mb-4">
+            <div class="col">
+                <div class="card">
+                    <div class="card-header">
+                        <h4>Participantes e Votos</h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col">
+                                <h5>Participantes Online: <span id="participantsCount">0</span></h5>
+                            </div>
+                        </div>
+                        <div id="participantsContainer" class="row">
+                            <!-- Participantes serão adicionados aqui dinamicamente -->
+                        </div>
+                        <div class="row mt-4">
+                            <div class="col">
+                                <h5>Resultados:</h5>
+                                <table class="table results-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Participante</th>
+                                            <th>Voto</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="resultsTableBody">
+                                        <!-- Resultados serão adicionados aqui dinamicamente -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
