@@ -4,63 +4,454 @@
     ViewData["Title"] = "Home page";
 }
 
+@section styles {
+
+    <style>
+
+        body {
+            padding-top: 2rem;
+            background-color: #f8f9fa;
+        }
+
+        .card {
+            margin-bottom: 1rem;
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+        }
+
+        .vote-card {
+            width: 60px;
+            height: 80px;
+            margin: 0.5rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.2rem;
+            transition: transform 0.2s;
+            border: 2px solid #dee2e6;
+            user-select: none;
+            background-color: white;
+        }
+
+            .vote-card:hover {
+                transform: translateY(-5px);
+                border-color: #0d6efd;
+            }
+
+            .vote-card.selected {
+                background-color: #0d6efd;
+                color: white;
+                border-color: #0d6efd;
+            }
+
+        .vote-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .user-list {
+            list-style-type: none;
+            padding-left: 0;
+        }
+
+        .user-item {
+            padding: 0.5rem;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+            .user-item .badge {
+                margin-left: 0.5rem;
+            }
+
+        .room-info {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            font-size: 0.8rem;
+        }
+
+        .task-name {
+            font-weight: bold;
+            margin-bottom: 1rem;
+        }
+
+    </style>
+
+}
+
 @section scripts {
 
+    <script>
+
+                // Estado da aplicação
+        const state = {
+            userName: '',
+            roomId: '',
+            connection: null,
+            selectedVote: null,
+            hasVoted: false
+        };
+
+        // Referências a elementos DOM
+        const elements = {
+            loginScreen: document.getElementById('login-screen'),
+            mainScreen: document.getElementById('main-screen'),
+            loginForm: document.getElementById('login-form'),
+            usernameInput: document.getElementById('username'),
+            roomIdInput: document.getElementById('room-id'),
+            currentRoomSpan: document.getElementById('current-room'),
+            userList: document.getElementById('user-list'),
+            voteCards: document.querySelectorAll('.vote-card'),
+            revealBtn: document.getElementById('reveal-btn'),
+            resultsArea: document.getElementById('results-area'),
+            votingArea: document.getElementById('voting-area'),
+            resultsTable: document.getElementById('results-table'),
+            newTaskBtn: document.getElementById('new-task-btn'),
+            newTaskModal: new bootstrap.Modal(document.getElementById('new-task-modal')),
+            newTaskForm: document.getElementById('new-task-form'),
+            taskNameInput: document.getElementById('task-name'),
+            taskDisplay: document.getElementById('task-display'),
+            avgVote: document.getElementById('avg-vote'),
+            minVote: document.getElementById('min-vote'),
+            maxVote: document.getElementById('max-vote'),
+            commonVote: document.getElementById('common-vote')
+        };
+
+        // Inicialização
+        document.addEventListener('DOMContentLoaded', () => {
+            // Verificar se já existe uma sessão salva
+            const savedSession = localStorage.getItem('scrumPokerSession');
+            if (savedSession) {
+                const session = JSON.parse(savedSession);
+                elements.usernameInput.value = session.userName;
+                elements.roomIdInput.value = session.roomId;
+
+                // Reconectar automaticamente se houver uma sessão salva
+                if (session.userName && session.roomId) {
+                    setTimeout(() => {
+                        elements.loginForm.dispatchEvent(new Event('submit'));
+                    }, 500);
+                }
+            }
+
+            setupEventListeners();
+        });
+
+        // Configurar eventos da interface
+        function setupEventListeners() {
+            // Login
+            elements.loginForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                state.userName = elements.usernameInput.value.trim();
+                state.roomId = elements.roomIdInput.value.trim();
+
+                if (state.userName && state.roomId) {
+                    // Salvar sessão
+                    localStorage.setItem('scrumPokerSession', JSON.stringify({
+                        userName: state.userName,
+                        roomId: state.roomId
+                    }));
+
+                    connectToHub();
+                }
+            });
+
+            // Seleção de voto
+            elements.voteCards.forEach(card => {
+                card.addEventListener('click', () => {
+                    if (state.hasVoted) return;
+
+                    // Remover seleção anterior
+                    elements.voteCards.forEach(c => c.classList.remove('selected'));
+
+                    // Selecionar novo cartão
+                    card.classList.add('selected');
+                    state.selectedVote = parseFloat(card.getAttribute('data-value'));
+
+                    // Enviar voto
+                    state.connection.invoke('SubmitVote', state.roomId, state.selectedVote);
+                    state.hasVoted = true;
+                });
+            });
+
+            // Botão revelar votos
+            elements.revealBtn.addEventListener('click', () => {
+                state.connection.invoke('RevealVotes', state.roomId);
+            });
+
+            // Botão nova tarefa
+            elements.newTaskBtn.addEventListener('click', () => {
+                elements.newTaskModal.show();
+            });
+
+            // Formulário nova tarefa
+            elements.newTaskForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const taskName = elements.taskNameInput.value.trim();
+                if (taskName) {
+                    state.connection.invoke('StartNewVoting', state.roomId, taskName);
+                    elements.newTaskModal.hide();
+                    elements.taskNameInput.value = '';
+                }
+            });
+        }
+
+        // Conexão com o SignalR Hub
+        async function connectToHub() {
+            // Criar conexão
+            state.connection = new signalR.HubConnectionBuilder()
+                .withUrl('/scrumPokerHub')
+                .withAutomaticReconnect()
+                .build();
+
+            setupSignalREvents();
+
+            try {
+                await state.connection.start();
+                console.log('Conectado ao hub SignalR');
+
+                // Entrar na sala
+                await state.connection.invoke('JoinRoom', state.roomId, state.userName);
+
+                // Mostrar tela principal
+                elements.loginScreen.style.display = 'none';
+                elements.mainScreen.style.display = 'flex';
+                elements.currentRoomSpan.textContent = state.roomId;
+
+            } catch (err) {
+                console.error('Erro ao conectar:', err);
+                alert('Erro ao conectar ao servidor. Por favor, tente novamente.');
+            }
+        }
+
+        // Configurar eventos do SignalR
+        function setupSignalREvents() {
+            // Um usuário entrou na sala
+            state.connection.on('UserJoined', (userName) => {
+                console.log(`${userName} entrou na sala`);
+            });
+
+            // Um usuário saiu da sala
+            state.connection.on('UserLeft', (userName) => {
+                console.log(`${userName} saiu da sala`);
+            });
+
+            // Atualizar lista de usuários
+            state.connection.on('UpdateUsers', (users) => {
+                updateUserList(users);
+            });
+
+            // Um usuário votou
+            state.connection.on('UserVoted', (userName) => {
+                console.log(`${userName} votou`);
+                updateUserList(); // Atualizar para mostrar quem já votou
+            });
+
+            // Todos votaram
+            state.connection.on('VotingComplete', () => {
+                console.log('Votação completa, pronto para revelar');
+            });
+
+            // Votos revelados
+            state.connection.on('VotesRevealed', (users, stats) => {
+                showResults(users, stats);
+            });
+
+            // Nova votação iniciada
+            state.connection.on('NewVotingStarted', (taskName) => {
+                startNewVoting(taskName);
+            });
+
+            // Estado inicial da sala
+            state.connection.on('RoomState', (room) => {
+                if (room.currentTask) {
+                    elements.taskDisplay.textContent = `Tarefa atual: ${room.currentTask}`;
+                }
+
+                if (room.votesRevealed) {
+                    // Mostrar resultados se já estiverem revelados
+                    showResults(room.users);
+                }
+
+                updateUserList(room.users);
+            });
+        }
+
+        // Atualizar lista de usuários
+        function updateUserList(users) {
+            if (!users) return;
+
+            elements.userList.innerHTML = '';
+            users.forEach(user => {
+                const li = document.createElement('li');
+                li.className = 'user-item';
+                li.textContent = user.name;
+
+                if (user.vote !== null) {
+                    const badge = document.createElement('span');
+                    badge.className = 'badge bg-success';
+                    badge.textContent = 'Votou';
+                    li.appendChild(badge);
+                }
+
+                elements.userList.appendChild(li);
+            });
+        }
+
+        // Mostrar resultados
+        function showResults(users, stats) {
+            elements.votingArea.style.display = 'none';
+            elements.resultsArea.style.display = 'block';
+
+            // Limpar tabela de resultados
+            elements.resultsTable.innerHTML = '';
+
+            // Preencher tabela de resultados
+            users.forEach(user => {
+                const row = document.createElement('tr');
+
+                const nameCell = document.createElement('td');
+                nameCell.textContent = user.name;
+                row.appendChild(nameCell);
+
+                const voteCell = document.createElement('td');
+                voteCell.textContent = user.vote !== null ? user.vote : 'Não votou';
+                row.appendChild(voteCell);
+
+                elements.resultsTable.appendChild(row);
+            });
+
+            // Preencher estatísticas
+            if (stats) {
+                elements.avgVote.textContent = stats.average.toFixed(1);
+                elements.minVote.textContent = stats.min;
+                elements.maxVote.textContent = stats.max;
+                elements.commonVote.textContent = stats.mostCommon;
+            }
+        }
+
+        // Iniciar nova votação
+        function startNewVoting(taskName) {
+            // Resetar estado
+            state.hasVoted = false;
+            state.selectedVote = null;
+
+            // Limpar seleção de votos
+            elements.voteCards.forEach(card => card.classList.remove('selected'));
+
+            // Mostrar área de votação e esconder resultados
+            elements.votingArea.style.display = 'block';
+            elements.resultsArea.style.display = 'none';
+
+            // Atualizar nome da tarefa
+            elements.taskDisplay.textContent = `Tarefa atual: ${taskName}`;
+        }
+
+    </script>
 
 }
 
 <div class="container">
     <!-- Tela de Login -->
-    <div id="loginScreen" class="row justify-content-center">
+    <div id="login-screen" class="row justify-content-center">
         <div class="col-md-6">
             <div class="card">
-                <div class="card-header">
-                    <h3 class="text-center">Scrum Poker</h3>
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">Entrar no Scrum Poker</h5>
                 </div>
                 <div class="card-body">
-                    <div class="form-group">
-                        <label for="username">Seu nome:</label>
-                        <input type="text" id="username" class="form-control" placeholder="Digite seu nome">
-                    </div>
-                    <button id="enterButton" class="btn btn-primary w-100 mt-3">Entrar</button>
+                    <form id="login-form">
+                        <div class="mb-3">
+                            <label for="username" class="form-label">Nome de usuário</label>
+                            <input type="text" class="form-control" id="username" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="room-id" class="form-label">ID da Sala</label>
+                            <input type="text" class="form-control" id="room-id" placeholder="Digite um ID para criar ou entrar em uma sala" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Entrar</button>
+                    </form>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- Tela Principal -->
-    <div id="mainScreen" class="hidden">
-        <div class="row mb-4">
-            <div class="col">
-                <h2>Scrum Poker</h2>
-                <h5>Bem-vindo, <span id="userNameDisplay"></span></h5>
-            </div>
-            <div class="col-auto">
-                <button id="leaveButton" class="btn btn-outline-danger">Sair</button>
-            </div>
+    <div id="main-screen" class="row" style="display: none;">
+        <div class="room-info">
+            Sala: <span id="current-room"></span>
         </div>
 
-        <!-- Área do moderador -->
-        <div id="moderatorArea" class="row mb-4">
-            <div class="col">
-                <div class="card">
-                    <div class="card-header">
-                        <h4>Área do Moderador</h4>
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">Scrum Poker</h5>
+                    <div>
+                        <button id="new-task-btn" class="btn btn-sm btn-light">Nova Tarefa</button>
                     </div>
-                    <div class="card-body">
-                        <div class="form-group mb-3">
-                            <label for="taskDescription">Descrição da Tarefa:</label>
-                            <input type="text" id="taskDescription" class="form-control" placeholder="Descreva a tarefa para a equipe avaliar">
+                </div>
+                <div class="card-body">
+                    <div class="task-name" id="task-display">Aguardando início da votação...</div>
+
+                    <div id="voting-area">
+                        <h6>Selecione sua estimativa:</h6>
+                        <div class="vote-container">
+                            <div class="vote-card" data-value="0">0</div>
+                            <div class="vote-card" data-value="0.5">½</div>
+                            <div class="vote-card" data-value="1">1</div>
+                            <div class="vote-card" data-value="2">2</div>
+                            <div class="vote-card" data-value="3">3</div>
+                            <div class="vote-card" data-value="5">5</div>
+                            <div class="vote-card" data-value="8">8</div>
+                            <div class="vote-card" data-value="13">13</div>
+                            <div class="vote-card" data-value="20">20</div>
+                            <div class="vote-card" data-value="40">40</div>
+                            <div class="vote-card" data-value="100">100</div>
                         </div>
-                        <div class="row">
-                            <div class="col">
-                                <button id="startVotingButton" class="btn btn-primary w-100">Iniciar Votação</button>
+
+                        <div class="d-flex justify-content-center mt-4">
+                            <button id="reveal-btn" class="btn btn-primary">Revelar Votos</button>
+                        </div>
+                    </div>
+
+                    <div id="results-area" class="mt-4" style="display: none;">
+                        <h6>Resultados:</h6>
+                        <table class="table table-bordered">
+                            <thead>
+                                <tr>
+                                    <th>Usuário</th>
+                                    <th>Voto</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-table">
+                            </tbody>
+                        </table>
+
+                        <div class="card mt-3">
+                            <div class="card-header bg-light">
+                                <h6 class="mb-0">Estatísticas</h6>
                             </div>
-                            <div class="col">
-                                <button id="revealVotesButton" class="btn btn-success w-100" disabled>Revelar Votos</button>
-                            </div>
-                            <div class="col">
-                                <button id="resetVotingButton" class="btn btn-warning w-100" disabled>Nova Votação</button>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-3">
+                                        <strong>Média:</strong> <span id="avg-vote"></span>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <strong>Mínimo:</strong> <span id="min-vote"></span>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <strong>Máximo:</strong> <span id="max-vote"></span>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <strong>Mais comum:</strong> <span id="common-vote"></span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -68,83 +459,35 @@
             </div>
         </div>
 
-        <!-- Área da tarefa atual -->
-        <div id="currentTaskArea" class="row mb-4 hidden">
-            <div class="col">
-                <div class="card">
-                    <div class="card-header">
-                        <h4>Tarefa Atual</h4>
-                    </div>
-                    <div class="card-body">
-                        <p id="currentTaskDescription" class="lead"></p>
-                        <div id="votingStatusArea" class="alert alert-info">
-                            Votação em andamento...
-                        </div>
-                    </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="card-title mb-0">Participantes</h5>
+                </div>
+                <div class="card-body">
+                    <ul class="user-list" id="user-list">
+                    </ul>
                 </div>
             </div>
         </div>
+    </div>
 
-        <!-- Área de votação -->
-        <div id="votingArea" class="row mb-4 hidden">
-            <div class="col">
-                <div class="card">
-                    <div class="card-header">
-                        <h4>Escolha sua estimativa</h4>
-                    </div>
-                    <div class="card-body text-center">
-                        <div id="cardsContainer">
-                            <div class="poker-card" data-value="0">0</div>
-                            <div class="poker-card" data-value="0.5">½</div>
-                            <div class="poker-card" data-value="1">1</div>
-                            <div class="poker-card" data-value="2">2</div>
-                            <div class="poker-card" data-value="3">3</div>
-                            <div class="poker-card" data-value="5">5</div>
-                            <div class="poker-card" data-value="8">8</div>
-                            <div class="poker-card" data-value="13">13</div>
-                            <div class="poker-card" data-value="20">20</div>
-                            <div class="poker-card" data-value="40">40</div>
-                            <div class="poker-card" data-value="100">100</div>
-                        </div>
-                        <p class="mt-3">Sua escolha: <span id="selectedValue">Nenhuma</span></p>
-                    </div>
+    <!-- Modal para nova tarefa -->
+    <div class="modal fade" id="new-task-modal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Nova Tarefa</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
-            </div>
-        </div>
-
-        <!-- Área de resultados -->
-        <div class="row mb-4">
-            <div class="col">
-                <div class="card">
-                    <div class="card-header">
-                        <h4>Participantes e Votos</h4>
-                    </div>
-                    <div class="card-body">
-                        <div class="row mb-3">
-                            <div class="col">
-                                <h5>Participantes Online: <span id="participantsCount">0</span></h5>
-                            </div>
+                <div class="modal-body">
+                    <form id="new-task-form">
+                        <div class="mb-3">
+                            <label for="task-name" class="form-label">Nome da Tarefa</label>
+                            <input type="text" class="form-control" id="task-name" required>
                         </div>
-                        <div id="participantsContainer" class="row">
-                            <!-- Participantes serão adicionados aqui dinamicamente -->
-                        </div>
-                        <div class="row mt-4">
-                            <div class="col">
-                                <h5>Resultados:</h5>
-                                <table class="table results-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Participante</th>
-                                            <th>Voto</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="resultsTableBody">
-                                        <!-- Resultados serão adicionados aqui dinamicamente -->
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
+                        <button type="submit" class="btn btn-primary">Iniciar Votação</button>
+                    </form>
                 </div>
             </div>
         </div>

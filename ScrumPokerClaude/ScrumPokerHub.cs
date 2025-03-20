@@ -1,209 +1,138 @@
 ﻿using Microsoft.AspNetCore.SignalR;
 
-public class Participant
+public class User
 {
     public string ConnectionId { get; set; }
     public string Name { get; set; }
-    public bool IsModerator { get; set; }
-    public bool HasVoted { get; set; }
     public double? Vote { get; set; }
 }
 
-// Classe para representar o estado da votação
-public class VotingStatus
+public class Room
 {
-    public bool IsVotingActive { get; set; }
+    public string Id { get; set; }
+    public string Name { get; set; }
+    public List<User> Users { get; set; } = new List<User>();
     public string CurrentTask { get; set; }
+    public bool VotesRevealed { get; set; } = false;
 }
 
-// Classe para representar um voto
-public class Vote
-{
-    public string UserName { get; set; }
-    public double Value { get; set; }
-}
-
-// Hub do SignalR
+// 2. Hub do SignalR
 public class ScrumPokerHub : Hub
 {
-    // Lista de participantes
-    private static List<Participant> participants = new List<Participant>();
+    private static Dictionary<string, Room> _rooms = new Dictionary<string, Room>();
 
-    // Estado atual da votação
-    private static VotingStatus votingStatus = new VotingStatus
-    {
-        IsVotingActive = false,
-        CurrentTask = ""
-    };
-
-    // Método chamado quando um usuário se conecta
     public override async Task OnConnectedAsync()
     {
         await base.OnConnectedAsync();
     }
 
-    // Método chamado quando um usuário se desconecta
     public override async Task OnDisconnectedAsync(Exception exception)
     {
-        var participant = participants.FirstOrDefault(p => p.ConnectionId == Context.ConnectionId);
-
-        if (participant != null)
+        // Remover usuário da sala quando desconectar
+        foreach (var room in _rooms.Values)
         {
-            participants.Remove(participant);
-            await Clients.All.SendAsync("UserDisconnected", participant.Name);
-            await UpdateParticipants();
-
-            // Se o moderador sair, escolher um novo moderador
-            if (participant.IsModerator && participants.Count > 0)
+            var user = room.Users.FirstOrDefault(u => u.ConnectionId == Context.ConnectionId);
+            if (user != null)
             {
-                participants.First().IsModerator = true;
-                await Clients.Client(participants.First().ConnectionId).SendAsync("SetModerator", true);
+                room.Users.Remove(user);
+                await Clients.Group(room.Id).SendAsync("UserLeft", user.Name);
+                await Clients.Group(room.Id).SendAsync("UpdateUsers", room.Users);
+                break;
             }
         }
 
         await base.OnDisconnectedAsync(exception);
     }
 
-    // Método para entrar na sessão
-    public async Task JoinSession(string username)
+    public async Task JoinRoom(string roomId, string userName)
     {
-        var participant = new Participant
+        // Criar sala se não existir
+        if (!_rooms.ContainsKey(roomId))
+        {
+            _rooms[roomId] = new Room { Id = roomId, Name = $"Sala {roomId}" };
+        }
+
+        // Adicionar usuário à sala
+        var room = _rooms[roomId];
+        var user = new User
         {
             ConnectionId = Context.ConnectionId,
-            Name = username,
-            IsModerator = participants.Count == 0, // Primeiro usuário é o moderador
-            HasVoted = false,
+            Name = userName,
             Vote = null
         };
 
-        participants.Add(participant);
+        room.Users.Add(user);
 
-        await Clients.All.SendAsync("UserConnected", username);
-        await Clients.Caller.SendAsync("SetModerator", participant.IsModerator);
-        await UpdateParticipants();
+        // Adicionar conexão ao grupo da sala
+        await Groups.AddToGroupAsync(Context.ConnectionId, roomId);
 
-        // Se houver uma votação em andamento, notificar o novo participante
-        if (votingStatus.IsVotingActive)
-        {
-            await Clients.Caller.SendAsync("NewTask", votingStatus.CurrentTask);
-            await Clients.Caller.SendAsync("UpdateVotingStatus", votingStatus);
-        }
+        // Notificar outros usuários
+        await Clients.Group(roomId).SendAsync("UserJoined", userName);
+        await Clients.Group(roomId).SendAsync("UpdateUsers", room.Users);
+
+        // Enviar estado atual da sala para o novo usuário
+        await Clients.Caller.SendAsync("RoomState", room);
     }
 
-    // Método para sair da sessão
-    public async Task LeaveSession()
+    public async Task SubmitVote(string roomId, double vote)
     {
-        var participant = participants.FirstOrDefault(p => p.ConnectionId == Context.ConnectionId);
+        if (!_rooms.ContainsKey(roomId)) return;
 
-        if (participant != null)
+        var room = _rooms[roomId];
+        var user = room.Users.FirstOrDefault(u => u.ConnectionId == Context.ConnectionId);
+
+        if (user != null)
         {
-            participants.Remove(participant);
-            await Clients.All.SendAsync("UserDisconnected", participant.Name);
-            await UpdateParticipants();
+            user.Vote = vote;
 
-            // Se o moderador sair, escolher um novo moderador
-            if (participant.IsModerator && participants.Count > 0)
+            // Notificar que alguém votou (sem revelar o voto)
+            await Clients.Group(roomId).SendAsync("UserVoted", user.Name);
+
+            // Se todos votaram, notificar que a votação está completa
+            if (room.Users.All(u => u.Vote.HasValue))
             {
-                participants.First().IsModerator = true;
-                await Clients.Client(participants.First().ConnectionId).SendAsync("SetModerator", true);
+                await Clients.Group(roomId).SendAsync("VotingComplete");
             }
         }
     }
 
-    // Método para iniciar uma votação
-    public async Task StartVoting(string taskDescription)
+    public async Task RevealVotes(string roomId)
     {
-        var participant = participants.FirstOrDefault(p => p.ConnectionId == Context.ConnectionId);
+        if (!_rooms.ContainsKey(roomId)) return;
 
-        if (participant != null && participant.IsModerator)
+        var room = _rooms[roomId];
+        room.VotesRevealed = true;
+
+        // Calcular estatísticas
+        var votes = room.Users.Where(u => u.Vote.HasValue).Select(u => u.Vote.Value).ToList();
+        var stats = new
         {
-            votingStatus.IsVotingActive = true;
-            votingStatus.CurrentTask = taskDescription;
+            Average = votes.Any() ? votes.Average() : 0,
+            Min = votes.Any() ? votes.Min() : 0,
+            Max = votes.Any() ? votes.Max() : 0,
+            MostCommon = votes.Any() ? votes.GroupBy(v => v)
+                                           .OrderByDescending(g => g.Count())
+                                           .First().Key : 0
+        };
 
-            // Resetar votos de todos os participantes
-            foreach (var p in participants)
-            {
-                p.HasVoted = false;
-                p.Vote = null;
-            }
-
-            await Clients.All.SendAsync("NewTask", taskDescription);
-            await Clients.All.SendAsync("UpdateVotingStatus", votingStatus);
-            await UpdateParticipants();
-        }
+        await Clients.Group(roomId).SendAsync("VotesRevealed", room.Users, stats);
     }
 
-    // Método para submeter um voto
-    public async Task SubmitVote(double value)
+    public async Task StartNewVoting(string roomId, string taskName)
     {
-        var participant = participants.FirstOrDefault(p => p.ConnectionId == Context.ConnectionId);
+        if (!_rooms.ContainsKey(roomId)) return;
 
-        if (participant != null && votingStatus.IsVotingActive)
+        var room = _rooms[roomId];
+        room.CurrentTask = taskName;
+        room.VotesRevealed = false;
+
+        // Resetar votos
+        foreach (var user in room.Users)
         {
-            participant.HasVoted = true;
-            participant.Vote = value;
-
-            await UpdateParticipants();
-
-            // Verificar se todos votaram
-            if (participants.All(p => p.HasVoted))
-            {
-                await Clients.Group("Moderators").SendAsync("AllVotesSubmitted");
-            }
+            user.Vote = null;
         }
-    }
 
-    // Método para revelar votos
-    public async Task RevealVotes()
-    {
-        var participant = participants.FirstOrDefault(p => p.ConnectionId == Context.ConnectionId);
-
-        if (participant != null && participant.IsModerator)
-        {
-            votingStatus.IsVotingActive = false;
-
-            var votes = participants
-                .Where(p => p.HasVoted && p.Vote.HasValue)
-                .Select(p => new Vote { UserName = p.Name, Value = p.Vote.Value })
-                .ToList();
-
-            await Clients.All.SendAsync("RevealVotes", votes);
-            await Clients.All.SendAsync("UpdateVotingStatus", votingStatus);
-        }
-    }
-
-    // Método para resetar votação
-    public async Task ResetVoting()
-    {
-        var participant = participants.FirstOrDefault(p => p.ConnectionId == Context.ConnectionId);
-
-        if (participant != null && participant.IsModerator)
-        {
-            votingStatus.IsVotingActive = false;
-            votingStatus.CurrentTask = "";
-
-            // Resetar votos de todos os participantes
-            foreach (var p in participants)
-            {
-                p.HasVoted = false;
-                p.Vote = null;
-            }
-
-            await Clients.All.SendAsync("ResetVoting");
-            await UpdateParticipants();
-        }
-    }
-
-    // Método para atualizar a lista de participantes
-    private async Task UpdateParticipants()
-    {
-        var participantsDTO = participants.Select(p => new
-        {
-            p.Name,
-            p.IsModerator,
-            p.HasVoted
-        }).ToList();
-
-        await Clients.All.SendAsync("UpdateParticipants", participantsDTO);
+        await Clients.Group(roomId).SendAsync("NewVotingStarted", taskName);
+        await Clients.Group(roomId).SendAsync("UpdateUsers", room.Users);
     }
 }

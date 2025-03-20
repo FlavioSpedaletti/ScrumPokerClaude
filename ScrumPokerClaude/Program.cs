@@ -35,6 +35,6 @@ app.MapRazorPages()
    .WithStaticAssets();
 
 app.UseCors("AllowAllOrigins");
-app.MapHub<ScrumPokerHub>("/pokerHub");
+app.MapHub<ScrumPokerHub>("/scrumPokerHub");
 
 app.Run();
